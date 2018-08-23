@@ -1,0 +1,146 @@
+# Handwritten Digits Classification Competition
+
+[MNIST](http://yann.lecun.com/exdb/mnist/) is a handwritten digits image data set created by Yann LeCun. Every digit is represented by a 28x28 image. It is the "Hello World!" equivalent in Deep Learning. There's a [long-term hosted competition](https://www.kaggle.com/c/digit-recognizer) on Kaggle using this data set. This example is based on [mxnet](https://github.com/dmlc/mxnet/tree/master/R-package).
+
+### Data Loading
+
+First, let us download the data if it does not already exist. If data is not available at that link, download from [here](https://www.kaggle.com/c/digit-recognizer/data).
+
+```{r, echo=FALSE}
+dataDirectory <- "../data"
+if (!file.exists(paste(dataDirectory,'/train.csv',sep="")))
+{
+  link <- 'https://apache-mxnet.s3-accelerate.dualstack.amazonaws.com/R/data/mnist_csv.zip'
+  if (!file.exists(paste(dataDirectory,'/mnist_csv.zip',sep="")))
+    download.file(link, destfile = paste(dataDirectory,'/mnist_csv.zip',sep=""))
+  unzip(paste(dataDirectory,'/mnist_csv.zip',sep=""), exdir = dataDirectory)
+  if (file.exists(paste(dataDirectory,'/test.csv',sep="")))
+    file.remove(paste(dataDirectory,'/test.csv',sep=""))
+}
+```
+
+Read data into R and convert to matrices. The data is created in augment.R.
+
+```{r}
+require(mxnet)
+source("img_ftns.R")
+options(scipen=999)
+
+
+train <- read.csv("../data/train_augment.csv", header=TRUE)
+test <- read.csv("../data/test_0.csv", header=TRUE)
+
+train <- train[sample(1:nrow(train)), ] # shuffle
+
+train.y <- train[,1]
+test.y <- test[,1]
+test <- data.matrix(test)
+train <- data.matrix(train)
+
+train.x <- train[,-1]
+test <- test[,-1]
+```
+
+The train dataset has `r nrow(train)` rows.
+
+Linearly transform it into [0,1] by dividing by 255. We also transpose the input matrix to npixel x nexamples, which is the column major format accepted by mxnet (and the convention of R).
+
+```{r}
+train.x <- t(train.x/255)
+test <- t(test/255)
+```
+
+## LeNet
+
+Create a model based on the LeNet architecture. This is a the same model as in the previous chapter, we have 2 sets of convolutional+pooling layers and then a Flatten layer and finally two Dense layers.
+
+```{r}
+mx.set.seed(0)
+# input
+data <- mx.symbol.Variable('data')
+# first conv
+conv1 <- mx.symbol.Convolution(data=data, kernel=c(5,5), num_filter=20)
+tanh1 <- mx.symbol.Activation(data=conv1, act_type="tanh")
+pool1 <- mx.symbol.Pooling(data=tanh1, pool_type="max",
+                           kernel=c(2,2), stride=c(2,2))
+# second conv
+conv2 <- mx.symbol.Convolution(data=pool1, kernel=c(5,5), num_filter=50)
+tanh2 <- mx.symbol.Activation(data=conv2, act_type="tanh")
+pool2 <- mx.symbol.Pooling(data=tanh2, pool_type="max",
+                           kernel=c(2,2), stride=c(2,2))
+# first fullc
+flatten <- mx.symbol.Flatten(data=pool2)
+fc1 <- mx.symbol.FullyConnected(data=flatten, num_hidden=500)
+tanh3 <- mx.symbol.Activation(data=fc1, act_type="tanh")
+# second fullc
+fc2 <- mx.symbol.FullyConnected(data=tanh3, num_hidden=10)
+# loss
+lenet <- mx.symbol.SoftmaxOutput(data=fc2)
+
+train.array <- train.x
+dim(train.array) <- c(28, 28, 1, ncol(train.x))
+test.array <- test
+dim(test.array) <- c(28, 28, 1, ncol(test))
+
+devices <- mx.gpu()
+tic <- proc.time()
+model2 <- mx.model.FeedForward.create(lenet, X = train.array, y = train.y,
+                                     ctx = devices, num.round = 5,
+                                     array.batch.size = 100,
+                                     learning.rate = 0.05, momentum = 0.9, wd = 0.00001,
+                                     eval.metric = mx.metric.accuracy,
+                                     batch.end.callback = mx.callback.log.train.metric(100))
+print(proc.time() - tic)
+preds2 <- predict(model2, test.array)
+pred.label <- max.col(t(preds2)) - 1
+
+res <- data.frame(cbind(test.y,pred.label))
+table(res)
+accuracy2 <- sum(res$test.y == res$pred.label) / nrow(res)
+```
+
+The accuracy of our model with augmented train data is `r accuracy2`.
+
+## Test Time Augmentation (TTA)
+```{r}
+test_data <- read.csv("../data/test_augment.csv", header=TRUE)
+
+test.y <- test_data[,1]
+test <- data.matrix(test_data)
+test <- test[,-1]
+test <- t(test/255)
+
+test.array <- test
+dim(test.array) <- c(28, 28, 1, ncol(test))
+
+preds3 <- predict(model2, test.array)
+dfPreds3 <- as.data.frame(t(preds3))
+# res is a data frame with our predictions after train data augmentation,
+# i.e. 4200 rows
+res$pred.label2 <- 0
+for (i in 1:nrow(res))
+{
+  sum_r <- dfPreds3[((i-1)*3)+1,] +
+    dfPreds3[((i-1)*3)+2,] + dfPreds3[(i*3),] 
+  res[i,"pred.label2"] <- max.col(sum_r)-1
+}
+table(res[,c("test.y","pred.label2")])
+accuracy3 <- sum(res$test.y == res$pred.label2) / nrow(res)
+```
+
+The accuracy of our CNN model with augmented train data and Test Time Augmentation (TTA) is `r accuracy3`.
+
+```{r}
+tta_incorrect <- nrow(res[res$test.y != res$pred.label2 & res$test.y == res$pred.label,])
+
+tta <- res[res$test.y == res$pred.label2 & res$test.y != res$pred.label,c("pred.label","pred.label2")]
+```
+
+Number of rows where Test Time Augmentation (TTA) changed the prediction to the correct value `r nrow(tta)`.
+
+Number of rows where Test Time Augmentation (TTA) changed the prediction to the incorrect value `r tta_incorrect`.
+
+```{r}
+tta
+table(tta)
+```

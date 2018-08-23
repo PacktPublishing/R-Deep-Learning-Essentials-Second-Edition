@@ -1,0 +1,50 @@
+
+The Fashion MINST dataset is available @ [Kaggle](https://www.kaggle.com/zalando-research/fashionmnist).
+
+Download the data and put it in the data folder. Now we can read data into R and get an idea of how it looks. 
+
+```{r}
+train <- read.csv("../data/fashion-mnist_train.csv", header=TRUE, nrows=20)
+```
+
+We have `r nrow(train)` rows and `r ncol(train)` columns, we will look at the first 5 columns and the last 5 columns:
+
+```{r}
+head(train[,1:5])
+head(train[,(ncol(train)-5):ncol(train)])
+```
+
+We have 785 columns, the first column is the data label and then we have 784 columns named pixel0,...,pixel783 with the pixel values. Our images are 28x28 = 784, so everything looks ok.
+
+Before we start building models, it is always a good idea to ensure your data is in the correct format and that your features and labels are aligned correctly. Lets plot the first 9 instances with their data labels. To do this, we create a helper function called plotInstance that takes in the pixel values and outputs the image with an optional header.
+
+Each training and test example is assigned to one of the following labels:
+0 T-shirt/top
+1 Trouser
+2 Pullover
+3 Dress
+4 Coat
+5 Sandal
+6 Shirt
+7 Sneaker
+8 Bag
+9 Ankle boot 
+
+```{r}
+plotInstance <-function (row,title="")
+{
+  mat <- matrix(row,nrow=28,byrow=TRUE)
+  mat <- t(apply(mat, 2, rev))
+  image(mat, main = title,axes = FALSE, col = grey(seq(0, 1, length = 256)))
+}
+labels<-c("T-shirt/top","Trouser","Pullover","Dress","Coat","Sandal","Shirt","Sneaker","Bag","Ankle boot")
+
+par(mfrow = c(4, 4))
+par(mar=c(2,2,2,2))
+for (i in 1:16)
+{
+  row <- as.numeric(train[i,2:ncol(train)])
+  num_label<-train[i,1]
+  plotInstance(row, paste("index:",i,", label =",labels[num_label+1]))
+}
+```

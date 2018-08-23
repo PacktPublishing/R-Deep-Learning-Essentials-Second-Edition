@@ -1,0 +1,49 @@
+
+First, let us download the data if it does not already exist. If data is not available at that link, download from [here](https://www.kaggle.com/c/digit-recognizer/data).
+
+```{r}
+dataDirectory <- "../data"
+if (!file.exists(paste(dataDirectory,'/train.csv',sep="")))
+{
+  link <- 'https://apache-mxnet.s3-accelerate.dualstack.amazonaws.com/R/data/mnist_csv.zip'
+  if (!file.exists(paste(dataDirectory,'/mnist_csv.zip',sep="")))
+    download.file(link, destfile = paste(dataDirectory,'/mnist_csv.zip',sep=""))
+  unzip(paste(dataDirectory,'/mnist_csv.zip',sep=""), exdir = dataDirectory)
+  if (file.exists(paste(dataDirectory,'/test.csv',sep="")))
+    file.remove(paste(dataDirectory,'/test.csv',sep=""))
+}
+```
+
+Now we can read data into R and get an idea of how it looks. 
+
+```{r}
+train <- read.csv("../data/train.csv", header=TRUE, nrows=20)
+```
+
+As in the previous chapter, we will  plot the first 9 instances with their data labels. To do this, we create a helper function called plotInstance that takes in the pixel values and outputs the image with an optional header.
+
+```{r}
+source("img_ftns.R")
+par(mfrow = c(3, 3))
+par(mar=c(2,2,2,2))
+for (i in 1:9)
+{
+  row <- as.numeric(train[i,2:ncol(train)])
+  mat <- matrix(row,nrow=28,byrow=TRUE)
+  plotInstance(mat, paste("label =",train[i,1]))
+}
+```
+
+Now, we can rotate the images 15 degrees to the left and plot again.  
+
+```{r}
+par(mfrow = c(3, 3))
+par(mar=c(2,2,2,2))
+for (i in 1:9)
+{
+  row <- as.numeric(train[i,2:ncol(train)])
+  img_row <- matrix(row,nrow=28,byrow=TRUE)
+  img_row2<-rotateInstance (img_row,15)
+  plotInstance(img_row2,paste("label =",train[i,1],", left 15 deg"))
+}
+```

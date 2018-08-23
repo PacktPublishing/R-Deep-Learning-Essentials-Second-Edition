@@ -1,0 +1,137 @@
+
+```{r results='hide',warning=FALSE}
+library(dplyr)
+library(ggplot2)
+library(readr)
+```
+
+##Import data
+Creates summary file if it does not already exist
+```{r}
+source("import.R")
+
+# step 1, merge files
+fileName <- import_data(data_directory,bExploreData=1)
+```
+
+##Read data
+```{r}
+t1<-Sys.time()
+df<-read.csv(fileName,colClasses="character",
+             header=TRUE,stringsAsFactors=FALSE)
+nSize_df1<-object.size(df)
+nSize_df1<-as.integer(nSize_df1/(1024*1024))
+t2<-Sys.time()
+diff1<-difftime(t2,t1,units="secs")
+diff1<-as.integer(diff1)
+dim(df)
+head(df)
+
+# convert numeric fields
+df$QUANTITY<-as.numeric(df$QUANTITY)
+df$SPEND<-as.numeric(df$SPEND)
+
+# convert date field
+df$SHOP_DATE <- as.Date(df$SHOP_DATE, "%Y%m%d")
+```
+##Data summaries
+Lets get some basic summaries
+```{r}
+nWeeks <- length(unique(df$SHOP_DATE))/7
+nLines <- nrow(df)
+nBaskets <- length(unique(df$BASKET_ID))
+nCustomers <- length(unique(df$CUST_CODE))
+nProducts <- length(unique(df$PROD_CODE))
+nStores <- length(unique(df$STORE_CODE))
+```
+Number of weeks we have data: `r nWeeks`.  
+Number of transaction lines: `r nLines`.  
+Number of transactions (baskets): `r nBaskets`.  
+Number of unique Customers: `r nCustomers`.  
+Number of unique Products: `r nProducts`.  
+Number of unique Stores: `r nStores`.  
+
+##Some graphs / data exploration
+In the following graphs, we want to ensure that the there is no gaps or outliers in the data. Because this is transactional data, we also expect to see some seasonal variations.
+```{r fig.width=10}
+# get summary stats
+sumSalesByDate<-df %>%
+  group_by(SHOP_DATE) %>%
+  summarise(sales = sum(SPEND),
+    qty = sum(QUANTITY),
+    Cust = n_distinct(CUST_CODE),
+    LineItems=n(),
+    Trx = n_distinct(BASKET_ID),
+    Products = n_distinct(PROD_CODE),
+    Prod10 = n_distinct(PROD_CODE_10),
+    Prod20 = n_distinct(PROD_CODE_20),
+    Prod30 = n_distinct(PROD_CODE_30),
+    Prod40 = n_distinct(PROD_CODE_40)
+  )
+sumSalesByDate$BasketSize<-sumSalesByDate$qty*1.0/sumSalesByDate$Trx
+head(sumSalesByDate)
+
+qplot(SHOP_DATE,sales,data=sumSalesByDate,geom="line",main="Sales by Date")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+ggplot(sumSalesByDate, aes(SHOP_DATE)) +
+  ggtitle("Depts by Date") +
+  ylab("") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(legend.title = element_blank()) +
+  geom_line(aes(y = Prod10, colour = "Prod10")) + 
+  geom_line(aes(y = Prod20, colour = "Prod20")) + 
+  geom_line(aes(y = Prod30, colour = "Prod30")) + 
+  geom_line(aes(y = Prod40, colour = "Prod40"))
+```
+This looks good. All the graph lines appear consistent, i.e. no spikes or zero values. We see peaks before Christmas and a decline in the early new year, which would be expected with transactional data.
+
+Now, we should check the department codes. There are 5 product codes ("PROD_CODE","PROD_CODE_10","PROD_CODE_20","PROD_CODE_30","PROD_CODE_40"). We want to know the number of levels in each department code and if the codes are a true hierarchy
+
+```{r}
+sumSalesByProducts <- df %>%
+  group_by(PROD_CODE,PROD_CODE_10,PROD_CODE_20,
+           PROD_CODE_30,PROD_CODE_40) %>%
+  summarise(sales = sum(SPEND)
+  )
+
+grp <- df %>%
+  group_by(PROD_CODE,PROD_CODE_10) %>%
+  summarise(count = n()
+  )
+nCheck0a <- nrow(grp)
+nCheck0b <- nrow(unique(grp[,1]))
+
+grp <- df %>%
+  group_by(PROD_CODE_10,PROD_CODE_20) %>%
+  summarise(count = n()
+  )
+nCheck1a <- nrow(grp)
+nCheck1b <- nrow(unique(grp[,1]))
+
+grp <- df %>%
+  group_by(PROD_CODE_20,PROD_CODE_30) %>%
+  summarise(count = n()
+  )
+nCheck2a <- nrow(grp)
+nCheck2b <- nrow(unique(grp[,1]))
+
+grp <- df %>%
+  group_by(PROD_CODE_30,PROD_CODE_40) %>%
+  summarise(count = n()
+  )
+nCheck3a <- nrow(grp)
+nCheck3b <- nrow(unique(grp[,1]))
+
+nCheck4b <- nrow(unique(grp[,2]))
+```
+PROD_CODE: Number of unique codes: `r nCheck0b`. Number of repeated codes: `r nCheck0a-nCheck0b`.  
+PROD_CODE_10: Number of unique codes:`r nCheck1b`. Number of repeated codes: `r nCheck1a-nCheck1b`.  
+PROD_CODE_20: Number of unique codes:`r nCheck2b`. Number of repeated codes: `r nCheck2a-nCheck2b`.  
+PROD_CODE_30: Number of unique codes:`r nCheck3b`. Number of repeated codes: `r nCheck3a-nCheck3b`.  
+PROD_CODE_40: Number of unique codes:`r nCheck4b`.  
+
+Department codes do not repeat, so the codes are a true hierarchy.  
+
+Size of data-frame after loading (MB):`r nSize_df1`  
+Time to load data-frame (secs):`r diff1`  

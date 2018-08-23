@@ -1,0 +1,64 @@
+
+First, let us download the data by uncommenting the two lines below. If data is not available at that link, download from [here](https://www.kaggle.com/c/digit-recognizer/data).
+
+```{r}
+dataDirectory <- "../data"
+if (!file.exists(paste(dataDirectory,'/train.csv',sep="")))
+{
+  link <- 'https://apache-mxnet.s3-accelerate.dualstack.amazonaws.com/R/data/mnist_csv.zip'
+  if (!file.exists(paste(dataDirectory,'/mnist_csv.zip',sep="")))
+    download.file(link, destfile = paste(dataDirectory,'/mnist_csv.zip',sep=""))
+  unzip(paste(dataDirectory,'/mnist_csv.zip',sep=""), exdir = dataDirectory)
+  if (file.exists(paste(dataDirectory,'/test.csv',sep="")))
+    file.remove(paste(dataDirectory,'/test.csv',sep=""))
+}
+```
+
+Now we can read data into R and get an idea of how it looks. 
+
+```{r}
+train <- read.csv(paste(dataDirectory,'/train.csv',sep=""), header=TRUE, nrows=20)
+```
+
+We have `r nrow(train)` rows and `r ncol(train)` columns, we will look at the first 6 columns and the last 6 columns:
+
+```{r}
+tail(train[,1:6])
+tail(train[,(ncol(train)-5):ncol(train)])
+```
+
+We have 785 columns, the first column is the data label and then we have 784 columns named pixel0,...,pixel783 with the pixel values. Our images are 28x28 = 784, so everything looks ok.
+
+Before we start building models, it is always a good idea to ensure your data is in the correct format and that your features and labels are aligned correctly. Lets plot the first 9 instances with their data labels. To do this, we create a helper function called plotInstance that takes in the pixel values and outputs the image with an optional header.
+
+```{r}
+plotInstance <-function (row,title="")
+{
+  mat <- matrix(row,nrow=28,byrow=TRUE)
+  mat <- t(apply(mat, 2, rev))
+  image(mat, main = title,axes = FALSE, col = grey(seq(0, 1, length = 256)))
+}
+par(mfrow = c(3, 3))
+par(mar=c(2,2,2,2))
+for (i in 1:9)
+{
+  row <- as.numeric(train[i,2:ncol(train)])
+  plotInstance(row, paste("index:",i,", label =",train[i,1]))
+}
+```
+
+We can try some image manipulation. Here we will 'move' the images up 6 pixels. We will use this later in our model evaluation.
+
+```{r}
+par(mfrow = c(3, 3))
+par(mar=c(2,2,2,2))
+skiprows<-6
+test2<-train
+test2[]<-0
+test2[,1:(ncol(test2)-28*skiprows)]<-train[,(28*skiprows):(-1+ncol(train))]
+for (i in 1:9)
+{
+  row <- as.numeric(test2[i,2:ncol(test2)])
+  plotInstance(row, paste("index:",i,", label =",train[i,1]))
+}
+```
