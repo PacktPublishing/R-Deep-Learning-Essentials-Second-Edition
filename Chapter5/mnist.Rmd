@@ -1,0 +1,173 @@
+# Handwritten Digits Classification Competition
+
+[MNIST](http://yann.lecun.com/exdb/mnist/) is a handwritten digits image data set created by Yann LeCun. Every digit is represented by a 28x28 image. It is the "Hello World!" equivalent in Deep Learning. There's a [long-term hosted competition](https://www.kaggle.com/c/digit-recognizer) on Kaggle using this data set. This example is based on [mxnet](https://github.com/dmlc/mxnet/tree/master/R-package).
+
+### Data Loading
+
+First, let us download the data if it does not already exist. If data is not available at that link, download from [here](https://www.kaggle.com/c/digit-recognizer/data).
+
+```{r, echo=FALSE}
+dataDirectory <- "../data"
+if (!file.exists(paste(dataDirectory,'/train.csv',sep="")))
+{
+  link <- 'https://apache-mxnet.s3-accelerate.dualstack.amazonaws.com/R/data/mnist_csv.zip'
+  if (!file.exists(paste(dataDirectory,'/mnist_csv.zip',sep="")))
+    download.file(link, destfile=paste(dataDirectory,'/mnist_csv.zip',sep=""))
+  unzip(paste(dataDirectory,'/mnist_csv.zip',sep=""), exdir=dataDirectory)
+  if (file.exists(paste(dataDirectory,'/test.csv',sep="")))
+    file.remove(paste(dataDirectory,'/test.csv',sep=""))
+}
+if (!file.exists(paste(dataDirectory,'/train.csv',sep="")))
+{
+  library(keras)
+  mnist <- dataset_mnist()
+  c(c(x_train,y_train),c(x_test,y_test)) %<-% dataset_mnist()
+  x_train <- array_reshape(x_train,c(dim(x_train)[1],dim(x_train)[2]*dim(x_train)[3]))
+  y_train <- array_reshape(y_train,c(length(y_train),1))
+  data_mnist <- as.data.frame(cbind(y_train,x_train))
+  dim(data_mnist)
+  colnames(data_mnist)[1] <- "label"
+  colnames(data_mnist)[2:ncol(data_mnist)] <- paste("pixel",seq(1,784),sep="")
+  write.csv(data_mnist,paste(dataDirectory,'/train.csv',sep=""),row.names=FALSE)
+}
+```
+
+Read data into R and convert to matrices. We want to get an estimate of accuracy on test data, so we split the training data into a train set and test set. Because we have a large number of rows, we can use a split ratio of 90/10.
+
+```{r}
+require(mxnet)
+options(scipen=999)
+
+dfMnist <- read.csv("../data/train.csv", header=TRUE)
+yvars <- dfMnist$label
+dfMnist$label <- NULL
+
+set.seed(42)
+train <- sample(nrow(dfMnist),0.9*nrow(dfMnist))
+test <- setdiff(seq_len(nrow(dfMnist)),train)
+train.y <- yvars[train]
+test.y <- yvars[test]
+train <- data.matrix(dfMnist[train,])
+test <- data.matrix(dfMnist[test,])
+
+rm(dfMnist,yvars)
+```
+
+Each image is represented as row of 784 (28x28) pixel values. The value of each pixel is in the range 0-255, we linearly transform it into 0-1 by dividing by 255. We also transpose the input matrix to because column major format in order to use it in mxnet.
+
+```{r}
+train <- t(train / 255.0)
+test <- t(test / 255.0)
+```
+
+Before creating a model, we should check that our dataset is balanced, i.e. the number of instances for each digit is reasonably even:
+
+```{r}
+table(train.y)
+```
+
+### Base model (no convolutional layers)
+
+Now we have the data. The next step is to configure the structure of our first model.
+
+```{r}
+data <- mx.symbol.Variable("data")
+fullconnect1 <- mx.symbol.FullyConnected(data, name="fullconnect1", num_hidden=256)
+activation1  <- mx.symbol.Activation(fullconnect1, name="activation1", act_type="relu")
+fullconnect2 <- mx.symbol.FullyConnected(activation1, name="fullconnect2", num_hidden=128)
+activation2  <- mx.symbol.Activation(fullconnect2, name="activation2", act_type="relu")
+fullconnect3 <- mx.symbol.FullyConnected(activation2, name="fullconnect3", num_hidden=10)
+softmax      <- mx.symbol.SoftmaxOutput(fullconnect3, name="softmax")
+```
+
+1. In `mxnet`, we use its own data type `symbol` to configure the network. `data <- mx.symbol.Variable("data")` use `data` to represent the input data, i.e. the input layer.
+2. Then we set the first hidden layer by `fullconnect1 <- mx.symbol.FullyConnected(data, name="fullconnect1", num_hidden=256)`. This layer has `data` as the input, its name and the number of hidden neurons.
+3. The activation is set by `activation1 <- mx.symbol.Activation(fullconnect1, name="relu1", act_type="relu")`. The activation function takes the output from the first hidden layer `fullconnect1`.
+4. The second hidden layer takes the result from `activation1` as the input, with its name as "fullconnect2" and the number of hidden neurons as 128.
+5. the second activation is almost the same as `activation1`, except we have a different input source and name.
+6. This is the output layer. There is 10 categories (digits), so we set the number of neurons to 10.
+7. Finally we set the activation to softmax to get a probabilistic prediction.
+
+Now lets train the base model. I have a GPU installed, so I can use that.
+
+```{r}
+devices <- mx.gpu()
+mx.set.seed(0)
+model <- mx.model.FeedForward.create(softmax, X=train, y=train.y,
+                                     ctx=devices,array.batch.size=128,
+                                     num.round=10,
+                                     learning.rate=0.05, momentum=0.9,
+                                     eval.metric=mx.metric.accuracy,
+                                     epoch.end.callback=mx.callback.log.train.metric(1))
+```
+
+### Create predictions for base model
+
+To make prediction, we call the predict function. We can then create a confusion matrix and calculate our accuracy level on test data.
+
+```{r}
+preds1 <- predict(model, test)
+pred.label1 <- max.col(t(preds1)) - 1
+res1 <- data.frame(cbind(test.y,pred.label1))
+table(res1)
+accuracy1 <- sum(res1$test.y == res1$pred.label1) / nrow(res1)
+```
+
+The accuracy of our base model is `r accuracy1`. Not bad, but lets see if we can improve on it.
+
+## LeNet
+
+Now we can create a model based on the LeNet architecture. This is a very simple model, we have 2 sets of convolutional+pooling layers and then a Flatten layer and finally two Dense layers.
+
+```{r}
+data <- mx.symbol.Variable('data')
+# first convolution layer
+convolution1 <- mx.symbol.Convolution(data=data, kernel=c(5,5), num_filter=64)
+activation1  <- mx.symbol.Activation(data=convolution1, act_type="tanh")
+pool1        <- mx.symbol.Pooling(data=activation1, pool_type="max",
+                           kernel=c(2,2), stride=c(2,2))
+
+# second convolution layer
+convolution2 <- mx.symbol.Convolution(data=pool1, kernel=c(5,5), num_filter=32)
+activation2  <- mx.symbol.Activation(data=convolution2, act_type="relu")
+pool2 <- mx.symbol.Pooling(data=activation2, pool_type="max",
+                           kernel=c(2,2), stride=c(2,2))
+
+# flatten layer and then fully connected layers
+flatten      <- mx.symbol.Flatten(data=pool2)
+fullconnect1 <- mx.symbol.FullyConnected(data=flatten, num_hidden=512)
+activation3  <- mx.symbol.Activation(data=fullconnect1, act_type="relu")
+fullconnect2 <- mx.symbol.FullyConnected(data=activation3, num_hidden=10)
+# final softmax layer
+softmax <- mx.symbol.SoftmaxOutput(data=fullconnect2)
+
+train.array <- train
+dim(train.array) <- c(28,28,1,ncol(train))
+test.array <- test
+dim(test.array) <- c(28,28,1,ncol(test))
+
+devices <- mx.gpu()
+mx.set.seed(0)
+model2 <- mx.model.FeedForward.create(softmax, X=train.array, y=train.y,
+                                     ctx=devices,array.batch.size=128,
+                                     num.round=10,
+                                     learning.rate=0.05, momentum=0.9, wd=0.00001,
+                                     eval.metric=mx.metric.accuracy,
+                                     epoch.end.callback=mx.callback.log.train.metric(1))
+
+# evaluate model
+preds2 <- predict(model2, test.array)
+pred.label2 <- max.col(t(preds2)) - 1
+res2 <- data.frame(cbind(test.y,pred.label2))
+table(res2)
+accuracy2 <- sum(res2$test.y == res2$pred.label2) / nrow(res2)
+```
+
+The accuracy of our CNN model is `r accuracy2`, which is quite an improvement over the accuracy of our base model which was `r accuracy1`.
+
+Finally, we can visualise our model in R.
+
+```{r fig.width=12}
+graph.viz(model2$symbol,type="vis")
+```
+
